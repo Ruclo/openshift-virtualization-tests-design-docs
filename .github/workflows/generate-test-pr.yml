@@ -69,8 +69,8 @@ jobs:
         if: steps.detect-stp.outputs.has_new_stp == 'true'
         run: |
           cd test-pr-generator
-          chmod +x setup
-          ./setup
+          chmod +x setup.sh
+          ./setup.sh
 
       - name: Read STP file content
         if: steps.detect-stp.outputs.has_new_stp == 'true'
