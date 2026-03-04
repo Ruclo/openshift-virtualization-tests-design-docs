@@ -1,0 +1,159 @@
+name: "Generate Test PR from STP"
+
+on:
+  pull_request:
+    types: [closed]
+    paths:
+      - 'stps/**/*.md'
+
+jobs:
+  generate-test-pr:
+    # Only run if PR was merged (not just closed)
+    if: github.event.pull_request.merged == true
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history to compare changes
+
+      - name: Generate GitHub App Token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: Ruclo
+          repositories: openshift-virtualization-tests
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "otest-code-agent[bot]"
+          git config --global user.email "otest-code-agent[bot]@users.noreply.github.com"
+
+      - name: Detect new STP files
+        id: detect-stp
+        run: |
+          # Get the base branch
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          # Find new STP files (added, not modified)
+          NEW_STPS=$(git diff --name-status $BASE_SHA $HEAD_SHA | grep '^A' | grep 'stps/.*\.md$' | cut -f2 || true)
+
+          if [ -z "$NEW_STPS" ]; then
+            echo "No new STP files detected"
+            echo "has_new_stp=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Get the first new STP file (if multiple, process the first one)
+          STP_FILE=$(echo "$NEW_STPS" | head -n 1)
+          echo "Found new STP file: $STP_FILE"
+          echo "stp_file=$STP_FILE" >> $GITHUB_OUTPUT
+          echo "has_new_stp=true" >> $GITHUB_OUTPUT
+
+      - name: Clone test-pr-generator
+        if: steps.detect-stp.outputs.has_new_stp == 'true'
+        run: |
+          git clone https://github.com/Ruclo/test-pr-generator.git
+          cd test-pr-generator
+          ls -la
+
+      - name: Run setup script
+        if: steps.detect-stp.outputs.has_new_stp == 'true'
+        run: |
+          cd test-pr-generator
+          chmod +x setup
+          ./setup
+
+      - name: Read STP file content
+        if: steps.detect-stp.outputs.has_new_stp == 'true'
+        id: read-stp
+        run: |
+          STP_PATH="${GITHUB_WORKSPACE}/${{ steps.detect-stp.outputs.stp_file }}"
+          # Read the file content and properly encode it for GitHub output
+          {
+            echo 'content<<EOF'
+            cat "$STP_PATH"
+            echo EOF
+          } >> $GITHUB_OUTPUT
+
+      - name: Run test generator with STP
+        if: steps.detect-stp.outputs.has_new_stp == 'true'
+        env:
+          STP_CONTENT: ${{ steps.read-stp.outputs.content }}
+        run: |
+          cd test-pr-generator
+          chmod +x run.sh
+          ./run.sh
+
+      - name: Commit and push changes
+        if: steps.detect-stp.outputs.has_new_stp == 'true'
+        run: |
+          cd test-pr-generator/openshift-virtualization-tests
+
+          # Get STP file name for branch naming
+          STP_FILE="${{ steps.detect-stp.outputs.stp_file }}"
+          STP_NAME=$(basename "$STP_FILE" .md)
+          BRANCH_NAME="stp-${STP_NAME}-$(date +%Y%m%d-%H%M%S)"
+
+          # Create and checkout new branch
+          git checkout -b "$BRANCH_NAME"
+
+          # Stage all changes
+          git add .
+
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            echo "branch_name=" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          # Commit changes
+          git commit -m "Add tests for STP: $STP_NAME
+
+          This commit was automatically generated from the merged STP: \`$STP_FILE\`
+
+          Source PR: ${{ github.event.pull_request.html_url }}
+
+          Co-Authored-By: otest-code-agent[bot] <otest-code-agent[bot]@users.noreply.github.com>"
+
+          # Set the remote with GitHub App token
+          git remote set-url origin https://x-access-token:${{ steps.generate-token.outputs.token }}@github.com/Ruclo/openshift-virtualization-tests.git
+
+          # Push to the target repository (not fork origin)
+          git push origin "$BRANCH_NAME"
+
+          # Save branch name for PR creation
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_ENV
+
+      - name: Create PR in openshift-virtualization-tests
+        if: steps.detect-stp.outputs.has_new_stp == 'true' && env.branch_name != ''
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        run: |
+          cd test-pr-generator/openshift-virtualization-tests
+
+          # Get STP file name for PR title
+          STP_FILE="${{ steps.detect-stp.outputs.stp_file }}"
+          STP_NAME=$(basename "$STP_FILE" .md)
+
+          # Create PR using gh CLI targeting the main repository
+          gh pr create \
+            --repo Ruclo/openshift-virtualization-tests \
+            --title "Add tests for STP: $STP_NAME" \
+            --body "This PR was automatically generated from the merged STP: \`$STP_FILE\`
+
+          Source PR: ${{ github.event.pull_request.html_url }}
+
+          Generated by: [generate-test-pr workflow](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
+            --base main \
+            --head "${{ env.branch_name }}"
+
+      - name: Report results
+        if: always() && steps.detect-stp.outputs.has_new_stp == 'true'
+        run: |
+          echo "::notice::Test PR generation completed for ${{ steps.detect-stp.outputs.stp_file }}"
