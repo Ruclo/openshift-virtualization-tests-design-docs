@@ -23,6 +23,7 @@ jobs:
           repositories: |
             openshift-virtualization-tests
             openshift-virtualization-tests-design-docs
+            test-pr-generator
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -60,7 +61,7 @@ jobs:
       - name: Clone test-pr-generator
         if: steps.detect-stp.outputs.has_new_stp == 'true'
         run: |
-          git clone https://github.com/Ruclo/test-pr-generator.git
+          git clone https://x-access-token:${{ steps.generate-token.outputs.token }}@github.com/Ruclo/test-pr-generator.git
           cd test-pr-generator
           ls -la
 
