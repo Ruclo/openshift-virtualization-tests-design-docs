@@ -1,0 +1,54 @@
+name: "Test GitHub App Token"
+
+on:
+  workflow_dispatch:  # Manually trigger this workflow
+
+jobs:
+  test-token:
+    runs-on: self-hosted
+
+    steps:
+      - name: Generate GitHub App Token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: Ruclo
+          repositories: openshift-virtualization-tests
+
+      - name: Test token with API call
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        run: |
+          echo "Testing GitHub App token..."
+
+          # Test the token by making an API call
+          gh api user
+
+          echo "Token works! Testing repository access..."
+
+          # Test access to the target repository
+          gh api repos/Ruclo/openshift-virtualization-tests
+
+          echo "Successfully authenticated and accessed the repository!"
+
+      - name: Test git operations
+        run: |
+          git config --global user.name "otest-code-agent[bot]"
+          git config --global user.email "otest-code-agent[bot]@users.noreply.github.com"
+
+          # Clone the repository using the token
+          git clone https://x-access-token:${{ steps.generate-token.outputs.token }}@github.com/Ruclo/openshift-virtualization-tests.git /tmp/test-clone
+
+          cd /tmp/test-clone
+          echo "Successfully cloned the repository!"
+          git log -1
+
+          # Clean up
+          cd /
+          rm -rf /tmp/test-clone
+
+      - name: Success
+        run: |
+          echo "::notice::GitHub App token generation and authentication successful!"
