@@ -93,6 +93,27 @@ jobs:
           chmod +x run.sh
           ./run.sh
 
+      - name: Push GRAVEYARD.md to test-pr-generator
+        if: steps.detect-stp.outputs.has_new_stp == 'true'
+        run: |
+          cd test-pr-generator
+
+          if [ -f "GRAVEYARD.md" ]; then
+            git add GRAVEYARD.md
+            if ! git diff --staged --quiet; then
+              git commit -m "Update GRAVEYARD.md
+
+          Source PR: ${{ github.event.pull_request.html_url }}"
+
+              git push origin main
+              echo "GRAVEYARD.md pushed to test-pr-generator"
+            else
+              echo "No changes to GRAVEYARD.md"
+            fi
+          else
+            echo "No GRAVEYARD.md found"
+          fi
+
       - name: Commit and push changes
         if: steps.detect-stp.outputs.has_new_stp == 'true'
         run: |
@@ -161,3 +182,9 @@ jobs:
         if: always() && steps.detect-stp.outputs.has_new_stp == 'true'
         run: |
           echo "::notice::Test PR generation completed for ${{ steps.detect-stp.outputs.stp_file }}"
+
+      - name: Cleanup self-hosted runner
+        if: always()
+        run: |
+          rm -rf test-pr-generator
+          rm -rf "$GITHUB_WORKSPACE"/*
