@@ -183,8 +183,3 @@ jobs:
         run: |
           echo "::notice::Test PR generation completed for ${{ steps.detect-stp.outputs.stp_file }}"
 
-      - name: Cleanup self-hosted runner
-        if: always()
-        run: |
-          rm -rf test-pr-generator
-          rm -rf "$GITHUB_WORKSPACE"/*
